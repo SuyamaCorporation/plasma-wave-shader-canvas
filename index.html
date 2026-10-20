@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plasma Wave Shader</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { margin:0; overflow:hidden; background:#000; }
+  #canvas { display:block; width:100vw; height:100vh; image-rendering:pixelated; image-rendering:crisp-edges; }
+  #ui { position:fixed; bottom:0; left:0; right:0; background:rgba(0,0,0,0.75); padding:12px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:center; }
+  .ctrl { display:flex; align-items:center; gap:6px; font-size:0.8rem; }
+  label { color:#ccc; white-space:nowrap; }
+  input[type=range] { width:80px; }
+  #fps { color:#4ade80; font-size:0.85rem; font-weight:bold; }
+</style>
+</head>
+<body>
+<canvas id="canvas" aria-label="Plasma wave animation"></canvas>
+<div id="ui" role="region" aria-label="Controls">
+  <span id="fps">FPS: --</span>
+
+  <div class="ctrl">
+    <label for="xfreq">X-Freq</label>
+    <input type="range" id="xfreq" min="5" max="80" value="16" aria-label="X frequency">
+    <span id="xfreqVal" class="text-white text-xs">16</span>
+  </div>
+  <div class="ctrl">
+    <label for="yfreq">Y-Freq</label>
+    <input type="range" id="yfreq" min="5" max="80" value="16" aria-label="Y frequency">
+    <span id="yfreqVal" class="text-white text-xs">16</span>
+  </div>
+  <div class="ctrl">
+    <label for="speed">Speed</label>
+    <input type="range" id="speed" min="1" max="20" value="5" aria-label="Animation speed">
+    <span id="speedVal" class="text-white text-xs">5</span>
+  </div>
+  <div class="ctrl">
+    <label for="sat">Saturation</label>
+    <input type="range" id="sat" min="20" max="100" value="80" aria-label="Color saturation">
+    <span id="satVal" class="text-white text-xs">80</span>
+  </div>
+
+  <div class="ctrl">
+    <label for="palette">Palette</label>
+    <select id="palette" class="bg-gray-800 text-white border border-gray-600 rounded px-2 py-1 text-sm" aria-label="Color palette">
+      <option value="rainbow">Rainbow</option>
+      <option value="fire">Fire</option>
+      <option value="ice">Ice</option>
+      <option value="neon">Neon</option>
+    </select>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let t = 0, lastTime = 0, fpsFrames = 0, fpsTimer = 0;
+
+// Half-resolution buffer
+let bufW, bufH, imgData;
+
+function resize() {
+  canvas.width = Math.floor(window.innerWidth / 2);
+  canvas.height = Math.floor(window.innerHeight / 2);
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  bufW = canvas.width;
+  bufH = canvas.height;
+  imgData = ctx.createImageData(bufW, bufH);
+}
+
+window.addEventListener('resize', resize);
+resize();
+
+function getParam(id) { return parseFloat(document.getElementById(id).value); }
+
+['xfreq','yfreq','speed','sat'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => { document.getElementById(id+'Val').textContent = el.value; });
+});
+
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360;
+  s /= 100; l /= 100;
+  const c = (1 - Math.abs(2*l - 1)) * s;
+  const x = c * (1 - Math.abs((h/60)%2 - 1));
+  const m = l - c/2;
+  let r,g,b;
+  if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}
+  else if(h<180){r=0;g=c;b=x;}else if(h<240){r=0;g=x;b=c;}
+  else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;}
+  return [(r+m)*255|(0),(g+m)*255|(0),(b+m)*255|(0)];
+}
+
+function valToColor(val, palette, sat) {
+  // val in [-4, 4], normalize to [0,1]
+  const n = (val + 4) / 8;
+  const h360 = n * 360;
+  switch(palette) {
+    case 'fire': {
+      // map to orange/red/yellow range 0–60
+      const h = n * 60;
+      const l = 30 + n * 40;
+      return hslToRgb(h, sat, l);
+    }
+    case 'ice': {
+      const h = 180 + n * 60;
+      const l = 40 + n * 30;
+      return hslToRgb(h, sat, l);
+    }
+    case 'neon': {
+      const h = (n * 720) % 360;
+      return hslToRgb(h, 100, 50);
+    }
+    default: // rainbow
+      return hslToRgb(h360, sat, 50);
+  }
+}
+
+function draw(ts) {
+  const dt = (ts - lastTime) / 1000;
+  lastTime = ts;
+  fpsTimer += dt; fpsFrames++;
+  if(fpsTimer >= 0.5) {
+    document.getElementById('fps').textContent = 'FPS: ' + Math.round(fpsFrames / fpsTimer);
+    fpsTimer = 0; fpsFrames = 0;
+  }
+
+  const xf = getParam('xfreq');
+  const yf = getParam('yfreq');
+  const spd = getParam('speed') * 0.01;
+  const sat = getParam('sat');
+  const palette = document.getElementById('palette').value;
+
+  t += spd;
+
+  const data = imgData.data;
+  for(let y = 0; y < bufH; y++) {
+    for(let x = 0; x < bufW; x++) {
+      const nx = x - bufW/2, ny = y - bufH/2;
+      const val = Math.sin(nx/xf + t)
+                + Math.sin(ny/yf + t)
+                + Math.sin((nx+ny)/(xf*0.7) + t)
+                + Math.sin(Math.sqrt(nx*nx+ny*ny)/(xf*0.5) + t);
+      const [r,g,b] = valToColor(val, palette, sat);
+      const i = (y * bufW + x) * 4;
+      data[i]=r; data[i+1]=g; data[i+2]=b; data[i+3]=255;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  requestAnimationFrame(draw);
+}
+
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
